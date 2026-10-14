@@ -9,7 +9,7 @@ import requests
 from datetime import datetime
 
 # ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ BOTFATHER:
-TOKEN = os.environ.get("8888798518:AAGgKbzaDsTEgzDQKdlgHbrlhQme82Ycmsc")
+TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
 # Удаляем старый webhook

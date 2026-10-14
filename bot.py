@@ -8,6 +8,12 @@ from flask import Flask
 TOKEN = "8888798518:AAFtrPQqMuHjCmwz0zU0ktjgAHY2y7KMkao"
 bot = telebot.TeleBot(TOKEN)
 
+# Удаляем старый веб-хук, чтобы убрать ошибку 409 Conflict
+try:
+    bot.remove_webhook()
+except Exception as e:
+    print(f"Ошибка при удалении webhook: {e}")
+
 # Хранилище подписок
 user_states = {}
 user_subscriptions = {}
@@ -121,7 +127,7 @@ def get_dates(message):
         parse_mode="Markdown"
     )
 
-# Веб-сервер для Web Service на Render
+# Веб-сервер для поддержания работы на Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -133,9 +139,8 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == '__main__':
-    # Запускаем веб-сервер в фоне
     t = threading.Thread(target=run_flask)
     t.start()
     
     print("Бот запущен...")
-    bot.infinity_polling()
+    bot.infinity_polling(skip_pending=True)

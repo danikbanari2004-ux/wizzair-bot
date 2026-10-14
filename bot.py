@@ -8,18 +8,20 @@ from flask import Flask
 TOKEN = "8888798518:AAFtrPQqMuHjCmwz0zU0ktjgAHY2y7KMkao"
 bot = telebot.TeleBot(TOKEN)
 
-# Удаляем старый веб-хук, чтобы убрать ошибку 409 Conflict
+# Удаляем старый веб-хук, чтобы убрать конфликт
 try:
     bot.remove_webhook()
 except Exception as e:
     print(f"Ошибка при удалении webhook: {e}")
 
-# Хранилище подписок
+# Хранилище подписок и состояний
 user_states = {}
 user_subscriptions = {}
 
+# Точная база кодов IATA для Wizz Air
 AIRPORTS = {
     "кишинев": "RMO", "кишинэу": "RMO", "chisinau": "RMO", "rmo": "RMO", "kiv": "RMO",
+    "аликанте": "ALC", "alicante": "ALC", "alc": "ALC",
     "бухарест": "OTP", "bucharest": "OTP", "otp": "OTP",
     "яссы": "IAS", "iasi": "IAS", "ias": "IAS",
     "рим": "FCO", "rome": "FCO", "fco": "FCO",
@@ -28,7 +30,8 @@ AIRPORTS = {
     "берлин": "BER", "berlin": "BER", "ber": "BER",
     "вена": "VIE", "vienna": "VIE", "vie": "VIE",
     "варшава": "WAW", "warsaw": "WAW", "waw": "WAW",
-    "париж": "BVA", "paris": "BVA", "bva": "BVA"
+    "париж": "BVA", "paris": "BVA", "bva": "BVA",
+    "барселона": "BCN", "barcelona": "BCN", "bcn": "BCN"
 }
 
 @bot.message_handler(commands=['start'])
@@ -41,8 +44,8 @@ def start_cmd(message):
     
     bot.send_message(
         chat_id, 
-        "👋 Привет! Я помогу тебе отслеживать дешевые билеты Wizz Air.\n\n"
-        "**Шаг 1 из 3:** Откуда вылетаем? Напиши город текстом или выбери из популярных:",
+        "👋 Привет! Я буду отслеживать для тебя падение цен на рейсы Wizz Air.\n\n"
+        "**Шаг 1 из 3:** Откуда вылетаем? Напиши город текстом или выбери из кнопок:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -52,12 +55,7 @@ def get_from_city(message):
     chat_id = message.chat.id
     text = message.text.strip().lower()
     
-    code = None
-    for key, val in AIRPORTS.items():
-        if key in text:
-            code = val
-            break
-            
+    code = AIRPORTS.get(text)
     if not code:
         code = text[:3].upper()
         
@@ -67,7 +65,7 @@ def get_from_city(message):
     bot.send_message(
         chat_id,
         f"✅ Отправление: **{code}**\n\n"
-        "**Шаг 2 из 3:** Куда летим? Напиши город назначения (например: *Рим*, *Милан*, *Лондон*, *Париж*):",
+        "**Шаг 2 из 3:** Куда летим? Напиши город назначения (например: *Аликанте*, *Рим*, *Милан*, *Париж*):",
         parse_mode="Markdown",
         reply_markup=types.ReplyKeyboardRemove()
     )
@@ -77,12 +75,7 @@ def get_to_city(message):
     chat_id = message.chat.id
     text = message.text.strip().lower()
     
-    code = None
-    for key, val in AIRPORTS.items():
-        if key in text:
-            code = val
-            break
-            
+    code = AIRPORTS.get(text)
     if not code:
         code = text[:3].upper()
         
@@ -92,7 +85,7 @@ def get_to_city(message):
     bot.send_message(
         chat_id,
         f"✅ Направление: **{code}**\n\n"
-        "**Шаг 3 из 3:** Введи ориентировочный месяц или даты поездки (например: *Май 2026* или *15.05 - 20.05*):",
+        "**Шаг 3 из 3:** Введи даты поездки (например: *10.03.2027 - 14.03.2027*):",
         parse_mode="Markdown"
     )
 
@@ -104,6 +97,7 @@ def get_dates(message):
     dep = user_states[chat_id]['from']
     arr = user_states[chat_id]['to']
     
+    # Сохраняем подписку
     user_subscriptions[chat_id] = {
         'from': dep,
         'to': arr,
@@ -112,18 +106,13 @@ def get_dates(message):
     }
     
     user_states[chat_id]['step'] = None
-    wizz_url = f"https://wizzair.com/ru-ru/flights/{dep.lower()}/{arr.lower()}"
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("✈️ Открыть Wizz Air", url=wizz_url))
     
     bot.send_message(
         chat_id,
         f"🎯 **Подписка успешно оформлена!**\n\n"
         f"✈️ Маршрут: **{dep} ➔ {arr}**\n"
         f"📅 Даты: **{dates}**\n\n"
-        f"Я ушел мониторить цены. Как только появятся скидки или цена упадет — я сразу пришлю тебе уведомление сюда!",
-        reply_markup=markup,
+        f"🔍 Бот начал мониторинг цен. Как только цена станет ниже или упадет — я пришлю тебе реальную ссылку на бронирование!",
         parse_mode="Markdown"
     )
 

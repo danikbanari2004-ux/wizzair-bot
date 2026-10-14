@@ -7,11 +7,12 @@ import requests
 from telebot import types
 from flask import Flask
 
-# Токен берем из переменных окружения Render
-TOKEN = os.environ.get("BOT_TOKEN")
-bot = telebot.TeleBot(TOKEN)
+# Токены из переменных окружения Render
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 
-# Сбрасываем старый webhook
+bot = telebot.TeleBot(BOT_TOKEN)
+
 try:
     bot.remove_webhook()
 except Exception as e:
@@ -73,12 +74,18 @@ def delete_user_subscriptions(chat_id):
     conn.commit()
     conn.close()
 
-# ==================== ДИНАМИЧЕСКИЙ ПОИСК АЭРОПОРТОВ ЧЕРЕЗ API ====================
-def search_airport_api(query):
-    """
-    Запрашивает глобальную базу агрегатора авиабилетов.
-    Возвращает (code, name) если аэропорт найден, либо None.
-    """
+# Реальные базы вылета Wizz Air
+WIZZ_ORIGIN_HUBS = {
+    "кишинев": "RMO", "кишинэу": "RMO", "chisinau": "RMO", "rmo": "RMO", "kiv": "RMO",
+    "яссы": "IAS", "iasi": "IAS", "ias": "IAS",
+    "бухарест": "OTP", "bucharest": "OTP", "otp": "OTP",
+    "варшава": "WAW", "warsaw": "WAW", "waw": "WAW",
+    "будапешт": "BUD", "budapest": "BUD", "bud": "BUD",
+    "вена": "VIE", "vienna": "VIE", "vie": "VIE"
+}
+
+def search_destination_api(query):
+    """ Поиск глобальных городов и кодов IATA """
     try:
         url = f"https://autocomplete.travelpayouts.com/places2?term={query}&locale=ru&types[]=airport&types[]=city"
         res = requests.get(url, timeout=5).json()
@@ -88,8 +95,38 @@ def search_airport_api(query):
             name = item.get("name") or item.get("city_name")
             return code, name
     except Exception as e:
-        print(f"Ошибка обращения к API автозаполнения: {e}")
+        print(f"Ошибка поиска города: {e}")
     return None, None
+
+def get_wizzair_price_apify(origin, destination):
+    """
+    Запрос цены напрямую через актор Wizz Air на Apify
+    """
+    if not APIFY_TOKEN:
+        # Резервный публичный запрос, если токен Apify еще не указан
+        try:
+            url = f"https://prices.gis.travelpayouts.com/v2/prices/latest?origin={origin}&destination={destination}&currency=eur"
+            res = requests.get(url, timeout=10).json()
+            if res.get("data") and len(res["data"]) > 0:
+                return res["data"][0].get("value")
+        except Exception:
+            pass
+        return None
+
+    try:
+        # Пример вызова Актора WizzAir на Apify через REST API
+        actor_id = "jupeter~wizzair-scraper" # Название актора в Apify Store
+        url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+        payload = {
+            "origin": origin,
+            "destination": destination
+        }
+        res = requests.post(url, json=payload, timeout=30).json()
+        if res and isinstance(res, list) and len(res) > 0:
+            return res[0].get("price")
+    except Exception as e:
+        print(f"Ошибка Apify API: {e}")
+    return None
 
 user_states = {}
 
@@ -104,9 +141,8 @@ def start_cmd(message):
     
     bot.send_message(
         chat_id, 
-        "✈️ **Wizz Air Price Tracker Bot**\n\n"
-        "Я умею находить любые города мира и отслеживать для тебя минимальные цены!\n\n"
-        "**Шаг 1 из 3:** Откуда вылетаем? Выбери из быстрых кнопок или напиши название города:",
+        "✈️ **Wizz Air Price Tracker Bot (Apify Integration)**\n\n"
+        "**Шаг 1 из 3:** Откуда вылетаем? Выберите хаб Wizz Air из кнопок или напишите город:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -127,8 +163,8 @@ def my_subs_cmd(message):
     text = "📋 **Твои активные отслеживания:**\n\n"
     for s in subs:
         dep, arr, dates, price = s
-        p_str = f"{price} EUR" if price else "запрос информации..."
-        text += f"✈️ **{dep} ➔ {arr}**\n📅 Даты: `{dates}`\n💰 Текущая миним. цена: `{p_str}`\n\n"
+        p_str = f"{price} EUR" if price else "запрос цены через Apify..."
+        text += f"✈️ **{dep} ➔ {arr}**\n📅 Даты: `{dates}`\n💰 Текущая цена: `{p_str}`\n\n"
     
     bot.send_message(chat_id, text, parse_mode="Markdown")
 
@@ -141,15 +177,19 @@ def cancel_cmd(message):
 @bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get('step') == 'FROM')
 def get_from_city(message):
     chat_id = message.chat.id
-    text = message.text.strip()
+    text = message.text.strip().lower()
     
-    # Ищем код через API агрегатора
-    code, name = search_airport_api(text)
-    
+    code = None
+    for key, val in WIZZ_ORIGIN_HUBS.items():
+        if key in text:
+            code = val
+            break
+            
     if not code:
         bot.send_message(
             chat_id,
-            "❌ **Город не найден.** Проверь написание и введи название города еще раз (например: *Кишинев*, *Яссы*, *Бухарест*):",
+            "❌ **Ошибка:** Из этого города Wizz Air не осуществляет вылеты.\n\n"
+            "Пожалуйста, выберите действующий хаб (например: *Кишинэу*, *Яссы*, *Бухарест*):",
             parse_mode="Markdown"
         )
         return
@@ -159,8 +199,8 @@ def get_from_city(message):
     
     bot.send_message(
         chat_id,
-        f"✅ Отправление: **{name} ({code})**\n\n"
-        "**Шаг 2 из 3:** Куда летим? Напиши город назначения (например: *Скиатос*, *Рим*, *Барселона*, *Аликанте*):",
+        f"✅ Отправление: **{code}**\n\n"
+        "**Шаг 2 из 3:** Куда летим? Напиши город назначения (например: *Скиатос*, *Рим*, *Барселона*, *Париж*):",
         parse_mode="Markdown",
         reply_markup=types.ReplyKeyboardRemove()
     )
@@ -170,12 +210,12 @@ def get_to_city(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    code, name = search_airport_api(text)
+    code, name = search_destination_api(text)
     
     if not code:
         bot.send_message(
             chat_id,
-            "❌ **Город или аэропорт не найден.** Попробуй написать название иначе (например: *Скиатос*, *Париж*, *Милан*):",
+            "❌ **Город не найден.** Проверьте название и введите еще раз (например: *Скиатос*, *Рим*, *Милан*):",
             parse_mode="Markdown"
         )
         return
@@ -203,55 +243,42 @@ def get_dates(message):
     
     bot.send_message(
         chat_id,
-        f"🎯 **Подписка сохранена!**\n\n"
+        f"🎯 **Подписка успешно создана!**\n\n"
         f"✈️ Маршрут: **{dep} ➔ {arr}**\n"
         f"📅 Даты: `{dates}`\n\n"
-        f"🔍 Бот начал мониторинг через агрегатор цен. Как только цена станет минимальной — пришлем уведомление со ссылкой!",
+        f"🔍 Бот подключен к Apify для фонового отслеживания цен Wizz Air!",
         parse_mode="Markdown"
     )
 
-# ==================== ФОНОВЫЙ МОНИТОРИНГ ЦЕН ====================
+# ==================== ФОНОВЫЙ МОНИТОРИНГ ====================
 def check_prices_task():
     while True:
         try:
-            time.sleep(3600) # Каждый час
+            time.sleep(3600)
             subs = get_all_subscriptions()
-            
             for sub in subs:
                 sub_id, chat_id, dep, arr, dates, last_price = sub
                 
-                try:
-                    # Запрос актуальных цен через легкий эндпоинт агрегатора
-                    url = f"https://prices.gis.travelpayouts.com/v2/prices/latest?origin={dep}&destination={arr}&currency=eur"
-                    res = requests.get(url, timeout=10).json()
-                    
-                    price = None
-                    if res.get("data") and len(res["data"]) > 0:
-                        price = res["data"][0].get("value")
-                    
-                    if price:
-                        if last_price is None:
-                            update_subscription_price(sub_id, price)
-                        elif price < last_price:
-                            update_subscription_price(sub_id, price)
-                            
+                price = get_wizzair_price_apify(dep, arr)
+                
+                if price:
+                    if last_price is None or price < last_price:
+                        update_subscription_price(sub_id, price)
+                        if last_price and price < last_price:
                             wizz_url = f"https://wizzair.com/ru-ru/flights/{dep.lower()}/{arr.lower()}"
                             markup = types.InlineKeyboardMarkup()
                             markup.add(types.InlineKeyboardButton("🔥 Забронировать рейс", url=wizz_url))
                             
                             bot.send_message(
                                 chat_id,
-                                f"🚨 **ЦЕНА УПАЛА!** 📉\n\n"
+                                f"🚨 **ЦЕНА УПАЛА (Apify Alert)!** 📉\n\n"
                                 f"✈️ Маршрут: **{dep} ➔ {arr}**\n"
                                 f"📅 Даты: `{dates}`\n"
                                 f"💵 Новая цена: **{price} EUR** (была {last_price} EUR)\n\n"
-                                f"Успей забронировать рейс по отличной цене!",
+                                f"Успей забронировать рейс!",
                                 reply_markup=markup,
                                 parse_mode="Markdown"
                             )
-                except Exception as e:
-                    print(f"Ошибка проверки цен для {dep}-{arr}: {e}")
-                    
         except Exception as e:
             print(f"Ошибка фонового процесса: {e}")
 
@@ -272,6 +299,4 @@ def run_flask():
 if __name__ == '__main__':
     t = threading.Thread(target=run_flask)
     t.start()
-    
-    print("Бот запущен с автоматическим API городов...")
     bot.infinity_polling(skip_pending=True)

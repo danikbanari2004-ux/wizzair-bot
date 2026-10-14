@@ -1,17 +1,17 @@
+import os
 import telebot
-import time
-import requests
+import threading
 from telebot import types
+from flask import Flask
 
-# 1. ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ BOTFATHER:
+# ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ BOTFATHER:
 TOKEN = "8888798518:AAFtrPQqMuHjCmwz0zU0ktjgAHY2y7KMkao"
 bot = telebot.TeleBot(TOKEN)
 
-# Хранилище подписок в памяти (Для работы 24/7)
+# Хранилище подписок
 user_states = {}
 user_subscriptions = {}
 
-# База основных городов/аэропортов для быстрого распознавания
 AIRPORTS = {
     "кишинев": "RMO", "кишинэу": "RMO", "chisinau": "RMO", "rmo": "RMO", "kiv": "RMO",
     "бухарест": "OTP", "bucharest": "OTP", "otp": "OTP",
@@ -46,7 +46,6 @@ def get_from_city(message):
     chat_id = message.chat.id
     text = message.text.strip().lower()
     
-    # Ищем код аэропорта
     code = None
     for key, val in AIRPORTS.items():
         if key in text:
@@ -54,7 +53,6 @@ def get_from_city(message):
             break
             
     if not code:
-        # Если города нет в словаре, берем первые 3 буквы как код IATA
         code = text[:3].upper()
         
     user_states[chat_id]['from'] = code
@@ -100,7 +98,6 @@ def get_dates(message):
     dep = user_states[chat_id]['from']
     arr = user_states[chat_id]['to']
     
-    # Сохраняем подписку
     user_subscriptions[chat_id] = {
         'from': dep,
         'to': arr,
@@ -109,8 +106,6 @@ def get_dates(message):
     }
     
     user_states[chat_id]['step'] = None
-    
-    # Ссылка на прямой поиск Wizz Air
     wizz_url = f"https://wizzair.com/ru-ru/flights/{dep.lower()}/{arr.lower()}"
     
     markup = types.InlineKeyboardMarkup()
@@ -126,6 +121,21 @@ def get_dates(message):
         parse_mode="Markdown"
     )
 
+# Веб-сервер для Web Service на Render
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
 if __name__ == '__main__':
+    # Запускаем веб-сервер в фоне
+    t = threading.Thread(target=run_flask)
+    t.start()
+    
     print("Бот запущен...")
     bot.infinity_polling()
